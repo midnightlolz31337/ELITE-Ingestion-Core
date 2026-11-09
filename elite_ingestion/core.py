@@ -80,7 +80,7 @@ def load_records(path: Path, fmt: str) -> Iterable[tuple[int, dict, bytes]]:
 def ingest(path: Path, fmt: str, source_id: str, authorized: bool) -> tuple[list[dict], list[dict]]:
     accepted, quarantine = [], []
     for line_no, record, raw in load_records(path, fmt):
-        if record.get("_parse_error"):
+        if not isinstance(record, dict) or record.get("_parse_error"):
             status, reasons = "quarantine", ["parse_error_or_duplicate_key"]
         else:
             status, reasons = inspect_record(record, source_id, authorized)
