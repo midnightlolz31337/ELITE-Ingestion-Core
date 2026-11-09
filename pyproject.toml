@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elite-ingestion-core"
+version = "0.1.0"
+description = "Bounded local ingestion with provenance and quarantine"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+elite-ingest = "elite_ingestion.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["elite_ingestion*"]
