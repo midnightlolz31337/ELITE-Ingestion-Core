@@ -1,0 +1,12 @@
+# ELITE Ingestion Core
+
+Purpose: bounded local JSONL/CSV ingestion with provenance, validation, and quarantine.
+
+Start here:
+- README.md — scope, quick start, limitations.
+- elite_ingestion/core.py — parsing, bounds, source gate, digest, and quarantine decisions.
+- elite_ingestion/cli.py — local CLI.
+- tests/test_core.py — current test coverage.
+- docs/THREAT_MODEL.md — threats addressed and gaps.
+
+This prototype performs no network collection and is not a sandbox or production security boundary. See ELITE Protocol for the shared observation and claim model.
