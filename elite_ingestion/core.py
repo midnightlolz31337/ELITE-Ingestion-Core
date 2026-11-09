@@ -43,11 +43,16 @@ def inspect_record(record: dict, source_id: str, source_authorized: bool) -> tup
         reasons.append("missing_content")
     content = record.get("content")
     if isinstance(content, str):
-        folded = content.casefold()
+        text = content
+    elif isinstance(content, dict) and isinstance(content.get("text"), str):
+        text = content["text"]
+    else:
+        text = None
+        reasons.append("content_not_string_or_text_object")
+    if text is not None:
+        folded = text.casefold()
         if any(marker in folded for marker in SUSPICIOUS_MARKERS):
             reasons.append("instruction_injection_indicator")
-    else:
-        reasons.append("content_not_string")
     return ("quarantine" if reasons else "accepted"), reasons
 
 def load_records(path: Path, fmt: str) -> Iterable[tuple[int, dict, bytes]]:
@@ -73,7 +78,10 @@ def load_records(path: Path, fmt: str) -> Iterable[tuple[int, dict, bytes]]:
             raise ValueError("CSV must contain a content column")
         for line_no, row in enumerate(rows, 2):
             encoded = json.dumps(row, ensure_ascii=False, sort_keys=True).encode()
-            yield line_no, row, encoded
+            if len(encoded) > MAX_RECORD_BYTES:
+                yield line_no, {"_record_too_large": True}, encoded
+            else:
+                yield line_no, row, encoded
     else:
         raise ValueError("format must be jsonl or csv")
 
@@ -82,6 +90,8 @@ def ingest(path: Path, fmt: str, source_id: str, authorized: bool) -> tuple[list
     for line_no, record, raw in load_records(path, fmt):
         if not isinstance(record, dict) or record.get("_parse_error"):
             status, reasons = "quarantine", ["parse_error_or_duplicate_key"]
+        elif record.get("_record_too_large"):
+            status, reasons = "quarantine", ["record_too_large"]
         else:
             status, reasons = inspect_record(record, source_id, authorized)
         envelope = {
