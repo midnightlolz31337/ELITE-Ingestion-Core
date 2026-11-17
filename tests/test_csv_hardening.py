@@ -28,7 +28,7 @@ class CsvFailureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "malformed CSV"):
                 list(core.iter_records(path, "csv"))
 
-    def test_field_limit_is_restored_when_generator_is_closed_early(self):
+    def test_field_limit_is_unchanged_when_generator_is_closed_early(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.csv"
             path.write_text("content\none\ntwo\n", encoding="utf-8")
