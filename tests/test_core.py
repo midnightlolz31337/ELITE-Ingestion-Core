@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -69,6 +70,15 @@ class IngestionTests(unittest.TestCase):
                 _, quarantine = ingest(path, "jsonl", "test", True)
             self.assertEqual(len(quarantine), 1)
             self.assertIn("record_too_large", quarantine[0]["reasons"])
+
+    def test_oversized_record_digest_covers_full_original_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = b'{"content":"' + b"x" * 100 + b'"}\\n'
+            path = self.write(tmp, "oversized.jsonl", raw)
+            with patch("elite_ingestion.core.MAX_RECORD_BYTES", 32):
+                _, quarantine = ingest(path, "jsonl", "source", True)
+            self.assertEqual(quarantine[0]["content_sha256"], hashlib.sha256(raw).hexdigest())
+            self.assertEqual(quarantine[0]["raw_size_bytes"], len(raw))
 
     def test_csv_stream_supports_quoted_multiline_content(self):
         with tempfile.TemporaryDirectory() as tmp:
