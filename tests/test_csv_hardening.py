@@ -13,9 +13,12 @@ class CsvFailureTests(unittest.TestCase):
             path = Path(directory) / "input.csv"
             path.write_text('content\n"' + ("x" * 20) + '\n' + ("y" * 20) + '"\n', encoding="utf-8")
             previous = core.csv.field_size_limit()
-            with patch.object(core, "MAX_RECORD_BYTES", 32):
-                with self.assertRaisesRegex(ValueError, "field exceeds"):
+            core.csv.field_size_limit(32)
+            try:
+                with self.assertRaisesRegex(ValueError, "Python CSV parser limit"):
                     list(core.iter_records(path, "csv"))
+            finally:
+                core.csv.field_size_limit(previous)
             self.assertEqual(core.csv.field_size_limit(), previous)
 
     def test_malformed_csv_is_a_controlled_error(self):
