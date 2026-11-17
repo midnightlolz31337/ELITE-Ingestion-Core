@@ -70,21 +70,45 @@ def _bounded_binary_lines(path: Path) -> Iterator[bytes]:
     """Yield lines without reading the entire file; enforce aggregate bytes."""
     total = 0
     with path.open("rb") as handle:
-        for line in handle:
+        while True:
+            # readline(size) caps the allocation even when an attacker supplies
+            # a single enormous line without a newline.
+            line = handle.readline(MAX_RECORD_BYTES + 1)
+            if not line:
+                break
             total += len(line)
             if total > MAX_FILE_BYTES:
                 raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
-            yield line
+            if len(line) > MAX_RECORD_BYTES:
+                # Drain the remainder in fixed-size chunks, accounting for
+                # aggregate input size, but never retain the full oversized line.
+                while not line.endswith(b"\\n"):
+                    chunk = handle.readline(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_FILE_BYTES:
+                        raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
+                    if chunk.endswith(b"\\n"):
+                        break
+                yield b"x" * (MAX_RECORD_BYTES + 1)
+            else:
+                yield line
 
 
 def _bounded_text_lines(path: Path) -> Iterator[str]:
     """UTF-8 text line iterator for csv.reader, with aggregate byte accounting."""
     total = 0
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        for line in handle:
+        while True:
+            line = handle.readline(MAX_RECORD_BYTES + 1)
+            if not line:
+                break
             total += len(line.encode("utf-8"))
             if total > MAX_FILE_BYTES:
                 raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
+            if len(line.encode("utf-8")) > MAX_RECORD_BYTES:
+                raise ValueError("CSV physical line exceeds record byte limit")
             yield line
 
 
