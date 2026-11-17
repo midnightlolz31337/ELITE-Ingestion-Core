@@ -93,7 +93,7 @@ def _bounded_binary_lines(path: Path) -> Iterator[bytes | RawDigest]:
                 digest = hashlib.sha256()
                 digest.update(line)
                 record_size = len(line)
-                while not line.endswith(b"\\n"):
+                while not line.endswith(b"\n"):
                     chunk = handle.readline(64 * 1024)
                     if not chunk:
                         break
@@ -102,7 +102,7 @@ def _bounded_binary_lines(path: Path) -> Iterator[bytes | RawDigest]:
                     digest.update(chunk)
                     if total > MAX_FILE_BYTES:
                         raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
-                    if chunk.endswith(b"\\n"):
+                    if chunk.endswith(b"\n"):
                         break
                 yield RawDigest(digest.hexdigest(), record_size)
             else:
