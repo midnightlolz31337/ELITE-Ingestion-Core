@@ -137,38 +137,34 @@ def iter_records(path: Path, fmt: str) -> Iterator[tuple[int, dict, bytes | RawD
             except (UnicodeDecodeError, json.JSONDecodeError, DuplicateKeyError):
                 yield line_no, {"_parse_error": True}, line
     elif fmt == "csv":
-        # csv.field_size_limit is process-global. Restore its previous value even
-        # when this generator is closed early or parsing raises an exception.
-        previous_field_limit = csv.field_size_limit()
-        csv.field_size_limit(MAX_RECORD_BYTES)
+        # Respect the csv module's configured field cap rather than mutating
+        # its process-global setting. The aggregate input bound remains the
+        # outer memory ceiling if an embedding application changes that cap.
+        reader = csv.reader(_bounded_text_lines(path), strict=True)
         try:
-            reader = csv.reader(_bounded_text_lines(path), strict=True)
-            try:
-                headers = next(reader)
-            except StopIteration:
-                raise ValueError("CSV input is empty") from None
-            except csv.Error as exc:
-                raise ValueError(f"malformed CSV header: {exc}") from exc
-            if not headers or "content" not in headers:
-                raise ValueError("CSV must contain a content column")
-            if len(headers) > MAX_CSV_FIELDS or len(set(headers)) != len(headers):
-                raise ValueError("CSV headers exceed field limit or contain duplicates")
-            if any(not header for header in headers):
-                raise ValueError("CSV headers must be non-empty")
-            try:
-                for row in reader:
-                    line_no = reader.line_num
-                    encoded = json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-                    if len(row) != len(headers):
-                        yield line_no, {"_parse_error": True}, encoded[:MAX_RECORD_BYTES]
-                    elif len(encoded) > MAX_RECORD_BYTES or any(len(value.encode("utf-8")) > MAX_RECORD_BYTES for value in row):
-                        yield line_no, {"_record_too_large": True}, encoded[:MAX_RECORD_BYTES]
-                    else:
-                        yield line_no, dict(zip(headers, row)), encoded
-            except csv.Error as exc:
-                raise ValueError(f"malformed CSV or field exceeds {MAX_RECORD_BYTES} bytes: {exc}") from exc
-        finally:
-            csv.field_size_limit(previous_field_limit)
+            headers = next(reader)
+        except StopIteration:
+            raise ValueError("CSV input is empty") from None
+        except csv.Error as exc:
+            raise ValueError(f"malformed CSV header: {exc}") from exc
+        if not headers or "content" not in headers:
+            raise ValueError("CSV must contain a content column")
+        if len(headers) > MAX_CSV_FIELDS or len(set(headers)) != len(headers):
+            raise ValueError("CSV headers exceed field limit or contain duplicates")
+        if any(not header for header in headers):
+            raise ValueError("CSV headers must be non-empty")
+        try:
+            for row in reader:
+                line_no = reader.line_num
+                encoded = json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                if len(row) != len(headers):
+                    yield line_no, {"_parse_error": True}, encoded[:MAX_RECORD_BYTES]
+                elif len(encoded) > MAX_RECORD_BYTES or any(len(value.encode("utf-8")) > MAX_RECORD_BYTES for value in row):
+                    yield line_no, {"_record_too_large": True}, encoded[:MAX_RECORD_BYTES]
+                else:
+                    yield line_no, dict(zip(headers, row)), encoded
+        except csv.Error as exc:
+            raise ValueError(f"malformed CSV or field exceeds the Python CSV parser limit: {exc}") from exc
     else:
         raise ValueError("format must be jsonl or csv")
 
