@@ -23,9 +23,9 @@ python -m unittest discover -s tests -v
 The legacy --authorized flag remains an alias for compatibility. Both flags record only an operator assertion. They do **not** authenticate an operator, establish legal or contractual authority, or enforce a source registry or organizational policy. Production integrations must supply an independently enforced policy decision and audit reference.
 
 ## Resource limits
-Defaults: 5 MiB aggregate input, 256 KiB per JSONL record / CSV row representation, 256 KiB per CSV field, and 256 CSV columns. Input is consumed incrementally. CSV quoted multiline fields are supported. Inputs that exceed the aggregate limit fail the import; oversized individual records are quarantined.
+Defaults: 5 MiB aggregate input, 256 KiB per JSONL record / CSV row representation, and 256 CSV columns. CSV field parsing also respects Python's configured csv module field-size limit (typically 128 KiB on CPython). Input is consumed incrementally. CSV quoted multiline fields are supported. Inputs that exceed the aggregate limit fail the import; oversized individual records are quarantined.
 
-Malformed CSV quoting and fields that exceed the CSV parser limit fail the import with a controlled error. The CLI stages accepted/quarantine outputs and replaces the prior output files only after the input has been processed successfully, so parser or resource-limit failures do not leave newly truncated partial outputs.
+Malformed CSV quoting and fields that exceed the configured CSV parser limit fail the import with a controlled error. The ingestion library does not change the process-global CSV parser setting. The CLI stages accepted/quarantine outputs and replaces the prior output files only after the input has been processed successfully, so parser or resource-limit failures do not leave newly truncated partial outputs.
 
 The library exposes iter_ingest for bounded-memory processing. The older ingest convenience wrapper remains available but accumulates results in memory and should only be used for small inputs or tests.
 
