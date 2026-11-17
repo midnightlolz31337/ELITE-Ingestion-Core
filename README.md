@@ -39,3 +39,8 @@ Instruction-injection markers are heuristics, not a complete detector or a secur
 - [ELITE Protocol](https://github.com/midnightlolz31337/ELITE-Protocol)
 - [ELITE Agent Commons](https://github.com/midnightlolz31337/ELITE-Agent-Commons)
 - [Huffman Network Atlas](https://github.com/midnightlolz31337/Huffman-Network-Atlas)
+
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE). Copyright 2026 LoLz contributors.
