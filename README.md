@@ -43,4 +43,4 @@ Instruction-injection markers are heuristics, not a complete detector or a secur
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE). Copyright 2026 LoLz contributors.
+This project is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE). The project code is offered under Apache-2.0; this does not grant trademark rights.
