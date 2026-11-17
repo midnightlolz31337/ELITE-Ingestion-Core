@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -19,6 +20,13 @@ SUSPICIOUS_MARKERS = (
 
 class DuplicateKeyError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class RawDigest:
+    """Digest/size for an oversized raw record retained without retaining its bytes."""
+    sha256: str
+    size_bytes: int
 
 
 def _unique_object(pairs):
@@ -66,7 +74,7 @@ def inspect_record(record: dict, source_id: str, operator_asserts_authorized: bo
     return ("quarantine" if reasons else "accepted"), reasons
 
 
-def _bounded_binary_lines(path: Path) -> Iterator[bytes]:
+def _bounded_binary_lines(path: Path) -> Iterator[bytes | RawDigest]:
     """Yield lines without reading the entire file; enforce aggregate bytes."""
     total = 0
     with path.open("rb") as handle:
@@ -80,18 +88,23 @@ def _bounded_binary_lines(path: Path) -> Iterator[bytes]:
             if total > MAX_FILE_BYTES:
                 raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
             if len(line) > MAX_RECORD_BYTES:
-                # Drain the remainder in fixed-size chunks, accounting for
-                # aggregate input size, but never retain the full oversized line.
+                # Hash the complete oversized record while draining it in
+                # fixed-size chunks; retain only digest and byte count.
+                digest = hashlib.sha256()
+                digest.update(line)
+                record_size = len(line)
                 while not line.endswith(b"\\n"):
                     chunk = handle.readline(64 * 1024)
                     if not chunk:
                         break
                     total += len(chunk)
+                    record_size += len(chunk)
+                    digest.update(chunk)
                     if total > MAX_FILE_BYTES:
                         raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
                     if chunk.endswith(b"\\n"):
                         break
-                yield b"x" * (MAX_RECORD_BYTES + 1)
+                yield RawDigest(digest.hexdigest(), record_size)
             else:
                 yield line
 
@@ -112,10 +125,13 @@ def _bounded_text_lines(path: Path) -> Iterator[str]:
             yield line
 
 
-def iter_records(path: Path, fmt: str) -> Iterator[tuple[int, dict, bytes]]:
+def iter_records(path: Path, fmt: str) -> Iterator[tuple[int, dict, bytes | RawDigest]]:
     """Stream parsed records. Limits are enforced while reading, not after allocation."""
     if fmt == "jsonl":
         for line_no, line in enumerate(_bounded_binary_lines(path), 1):
+            if isinstance(line, RawDigest):
+                yield line_no, {"_record_too_large": True}, line
+                continue
             if not line.strip():
                 continue
             if len(line) > MAX_RECORD_BYTES:
@@ -173,7 +189,8 @@ def iter_ingest(
             "import_id": run_id,
             "source_id": source_id,
             "source_record": line_no,
-            "content_sha256": sha256_bytes(raw),
+            "content_sha256": raw.sha256 if isinstance(raw, RawDigest) else sha256_bytes(raw),
+            "raw_size_bytes": raw.size_bytes if isinstance(raw, RawDigest) else len(raw),
             "record": record,
             "decision": status,
             "reasons": reasons,
