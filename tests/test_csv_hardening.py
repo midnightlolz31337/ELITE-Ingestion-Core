@@ -63,6 +63,40 @@ class CsvFailureTests(unittest.TestCase):
                 "accepted.jsonl", "quarantine.jsonl"
             ])
 
+    def test_csv_parser_failures_preserve_both_existing_outputs(self):
+        cases = (
+            ("malformed.csv", 'content\\n"unterminated\\n', None, "malformed CSV"),
+            ("oversized.csv", "content\\n" + ("x" * 40) + "\\n", 16, "Python CSV parser limit"),
+        )
+        for filename, source_text, field_limit, expected_error in cases:
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / filename
+                source.write_text(source_text, encoding="utf-8")
+                output = root / "output"
+                output.mkdir()
+                accepted = output / "accepted.jsonl"
+                quarantine = output / "quarantine.jsonl"
+                accepted.write_text("previous accepted\\n", encoding="utf-8")
+                quarantine.write_text("previous quarantine\\n", encoding="utf-8")
+                previous = core.csv.field_size_limit()
+                try:
+                    if field_limit is not None:
+                        core.csv.field_size_limit(field_limit)
+                    with self.assertRaises(SystemExit) as raised:
+                        main([
+                            "ingest", str(source), "--source-id", "test",
+                            "--operator-asserts-authorized", "--output-dir", str(output),
+                        ])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertEqual(accepted.read_text(encoding="utf-8"), "previous accepted\\n")
+                    self.assertEqual(quarantine.read_text(encoding="utf-8"), "previous quarantine\\n")
+                    self.assertEqual(sorted(item.name for item in output.iterdir()), [
+                        "accepted.jsonl", "quarantine.jsonl"
+                    ])
+                finally:
+                    core.csv.field_size_limit(previous)
+
 
 if __name__ == "__main__":
     unittest.main()
