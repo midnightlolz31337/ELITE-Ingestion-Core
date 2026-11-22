@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .core import iter_ingest
+from .core import iter_ingest, strict_json_loads
 
 
 def _sha256_file(path: Path) -> str:
@@ -21,6 +21,21 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(64 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _inspect_jsonl_file(path: Path) -> tuple[int, str, int, int | None]:
+    """Return byte size, SHA-256, newline count, and final byte for a JSONL file."""
+    digest = hashlib.sha256()
+    size = line_count = 0
+    last_byte = None
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(64 * 1024), b""):
+            size += len(chunk)
+            line_count += chunk.count(bytes([10]))
+            if chunk:
+                last_byte = chunk[-1]
+            digest.update(chunk)
+    return size, digest.hexdigest(), line_count, last_byte
 
 
 def _write_current_pointer(output_dir: Path, manifest: dict) -> None:
@@ -54,8 +69,8 @@ def _read_current_pointer(pointer: Path) -> tuple[dict, Path]:
     if pointer.is_symlink():
         raise ValueError("CURRENT.json must not be a symlink")
     try:
-        manifest = json.loads(pointer.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest = strict_json_loads(pointer.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
         raise ValueError(f"cannot read current generation manifest: {exc}") from exc
 
     if not isinstance(manifest, dict) or set(manifest) != {
@@ -65,6 +80,19 @@ def _read_current_pointer(pointer: Path) -> tuple[dict, Path]:
         raise ValueError("CURRENT.json has an invalid structure")
     if manifest["schema_version"] != "1":
         raise ValueError("unsupported CURRENT.json schema version")
+    created_at = manifest["created_at"]
+    if not isinstance(created_at, str) or not created_at:
+        raise ValueError("CURRENT.json created_at is invalid")
+    try:
+        parsed_created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("CURRENT.json created_at is not a valid ISO 8601 timestamp") from exc
+    if parsed_created_at.tzinfo is None or parsed_created_at.utcoffset() is None:
+        raise ValueError("CURRENT.json created_at must include a timezone")
+    for count_name in ("accepted_count", "quarantine_count"):
+        count = manifest[count_name]
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"CURRENT.json {count_name} is invalid")
 
     generation_id = manifest["generation_id"]
     if not isinstance(generation_id, str) or not generation_id:
@@ -106,8 +134,14 @@ def _read_current_pointer(pointer: Path) -> tuple[dict, Path]:
             raise ValueError(f"CURRENT.json size for {name} is invalid")
         if not isinstance(entry["sha256"], str) or len(entry["sha256"]) != 64 or any(ch not in "0123456789abcdef" for ch in entry["sha256"]):
             raise ValueError(f"CURRENT.json SHA-256 for {name} is invalid")
-        if file_path.stat().st_size != entry["size"] or _sha256_file(file_path) != entry["sha256"]:
+        actual_size, actual_digest, actual_count, last_byte = _inspect_jsonl_file(file_path)
+        if actual_size != entry["size"] or actual_digest != entry["sha256"]:
             raise ValueError(f"current generation integrity check failed: {name}")
+        if actual_size and last_byte != 10:
+            raise ValueError(f"current generation file is not newline-terminated: {name}")
+        expected_count = manifest["accepted_count" if name == "accepted.jsonl" else "quarantine_count"]
+        if actual_count != expected_count:
+            raise ValueError(f"current generation record count mismatch: {name}")
 
     return manifest, generation_dir
 
