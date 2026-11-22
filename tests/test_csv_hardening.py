@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import elite_ingestion.core as core
 from elite_ingestion.cli import _read_current_pointer, main
+from elite_ingestion.generation import read_current_generation
 
 
 class CsvFailureTests(unittest.TestCase):
@@ -201,6 +202,24 @@ class CsvFailureTests(unittest.TestCase):
                 finally:
                     core.csv.field_size_limit(previous)
 
+
+
+    def test_public_generation_api_matches_cli_pointer_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "input.jsonl"
+            source.write_text('{"content":"public generation API"}\\n', encoding="utf-8")
+            output = root / "output"
+            main([
+                "ingest", str(source), "--source-id", "test",
+                "--operator-asserts-authorized", "--output-dir", str(output),
+            ])
+            pointer = output / "CURRENT.json"
+            manifest, generation = read_current_generation(pointer)
+            private_manifest, private_generation = _read_current_pointer(pointer)
+            self.assertEqual(manifest, private_manifest)
+            self.assertEqual(generation, private_generation)
+            self.assertTrue((generation / "accepted.jsonl").is_file())
 
     def test_current_pointer_rejects_manifest_record_count_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
