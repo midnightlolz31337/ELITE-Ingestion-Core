@@ -16,7 +16,7 @@ Python 3.10+, standard library only:
 
 ~~~bash
 python -m elite_ingestion.cli ingest examples/sample.jsonl --source-id demo --operator-asserts-authorized
-python -m elite_ingestion.cli inspect output/accepted.jsonl output/quarantine.jsonl
+python -m elite_ingestion.cli inspect output/CURRENT.json
 python -m unittest discover -s tests -v
 ~~~
 
@@ -25,12 +25,12 @@ The legacy --authorized flag remains an alias for compatibility. Both flags reco
 ## Resource limits
 Defaults: 5 MiB aggregate input, 256 KiB per JSONL record / CSV row representation, and 256 CSV columns. CSV field parsing also respects Python's configured csv module field-size limit (typically 128 KiB on CPython). Input is consumed incrementally. CSV quoted multiline fields are supported. Inputs that exceed the aggregate limit fail the import; oversized individual records are quarantined.
 
-Malformed CSV quoting and fields that exceed the configured CSV parser limit fail the import with a controlled error. The ingestion library does not change the process-global CSV parser setting. The CLI stages accepted/quarantine outputs and replaces the prior output files only after the input has been processed successfully, so parser or resource-limit failures do not leave newly truncated partial outputs.
+Malformed CSV quoting and fields that exceed the configured CSV parser limit fail the import with a controlled error. The ingestion library does not change the process-global CSV parser setting. The CLI writes accepted and quarantine records into a new immutable generation directory, fsyncs both files, and atomically replaces a single output/CURRENT.json pointer only after processing succeeds. Consumers should read the two files from the generation referenced by CURRENT.json; the pointer is the authoritative commit record. If parsing or resource limits fail, the staging directory is discarded and the prior pointer and generation remain unchanged. A crash after generation creation but before pointer replacement may leave an unreferenced generation directory, but it cannot make a mixed pair current.
 
 The library exposes iter_ingest for bounded-memory processing. The older ingest convenience wrapper remains available but accumulates results in memory and should only be used for small inputs or tests.
 
 ## Identifiers and integrity
-Each import receives a UUID import ID by default. Record IDs combine that import ID and source line number, avoiding collisions between repeated imports. A caller may supply a stable import ID when deliberately reproducing an import. SHA-256 digests cover the raw JSONL line or normalized CSV row representation; for CSV this is not a byte-for-byte digest of the original file row.
+Each CLI import receives a UUID generation/import ID. Record IDs combine that ID and source line number, avoiding collisions between repeated imports. CURRENT.json records the generation path, record counts, byte sizes, and SHA-256 digests for both output files; inspect verifies those values before reporting the generation. Existing flat output files from earlier prototype versions are not updated and should not be treated as the current output. SHA-256 digests cover the raw JSONL line or normalized CSV row representation; for CSV this is not a byte-for-byte digest of the original file row.
 
 ## Limitations
 Instruction-injection markers are heuristics, not a complete detector or a security boundary. Hashes establish byte-level integrity relative to a digest, not truth, authorship, or legality. Duplicate detection is not semantic. A clean validation result does not establish source accuracy. This prototype does not implement a source registry, identity/authentication, legal review, signed manifests, network collection, crawling, or autonomous action.
