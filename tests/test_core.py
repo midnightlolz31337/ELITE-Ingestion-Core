@@ -139,9 +139,9 @@ class IngestionTests(unittest.TestCase):
 
     def test_oversized_csv_representation_digest_covers_full_canonical_row(self):
         with tempfile.TemporaryDirectory() as tmp:
-            content = "x" * 20 + "\\n" + "x" * 20
+            content = "x" * 20 + "\n" + "x" * 20
             canonical = json.dumps([content], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            source = b'content\\n"' + b"x" * 20 + b"\\n" + b"x" * 20 + b'"\\n'
+            source = b'content\n"' + b"x" * 20 + b"\n" + b"x" * 20 + b'"\n'
             path = self.write(tmp, "large.csv", source)
             with patch("elite_ingestion.core.MAX_RECORD_BYTES", 32):
                 _, quarantine = ingest(path, "csv", "source", True)
