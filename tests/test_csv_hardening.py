@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import elite_ingestion.core as core
-from elite_ingestion.cli import main
+from elite_ingestion.cli import _read_current_pointer, main
 
 
 class CsvFailureTests(unittest.TestCase):
@@ -200,6 +200,48 @@ class CsvFailureTests(unittest.TestCase):
                     ])
                 finally:
                     core.csv.field_size_limit(previous)
+
+
+    def test_current_pointer_rejects_manifest_record_count_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "input.jsonl"
+            source.write_text('{"content":"one accepted record"}\n', encoding="utf-8")
+            output = root / "output"
+            main([
+                "ingest", str(source), "--source-id", "test",
+                "--operator-asserts-authorized", "--output-dir", str(output),
+            ])
+            pointer = output / "CURRENT.json"
+            manifest = json.loads(pointer.read_text(encoding="utf-8"))
+            manifest["accepted_count"] += 1
+            pointer.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "record count mismatch"):
+                _read_current_pointer(pointer)
+
+    def test_current_pointer_rejects_duplicate_json_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pointer = Path(directory) / "CURRENT.json"
+            pointer.write_text('{"schema_version":"1","schema_version":"1"}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+                _read_current_pointer(pointer)
+
+    def test_current_pointer_rejects_timezone_free_created_at(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "input.jsonl"
+            source.write_text('{"content":"one accepted record"}\n', encoding="utf-8")
+            output = root / "output"
+            main([
+                "ingest", str(source), "--source-id", "test",
+                "--operator-asserts-authorized", "--output-dir", str(output),
+            ])
+            pointer = output / "CURRENT.json"
+            manifest = json.loads(pointer.read_text(encoding="utf-8"))
+            manifest["created_at"] = "2026-11-22T12:00:00"
+            pointer.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must include a timezone"):
+                _read_current_pointer(pointer)
 
 
 if __name__ == "__main__":
