@@ -136,7 +136,7 @@ class CsvFailureTests(unittest.TestCase):
             root = Path(directory)
             output = root / "output"
             source = root / "input.jsonl"
-            source.write_text('{"content":"first generation"}\\n', encoding="utf-8")
+            source.write_text('{"content":"first generation"}\n', encoding="utf-8")
             main([
                 "ingest", str(source), "--source-id", "test",
                 "--operator-asserts-authorized", "--output-dir", str(output),
@@ -151,7 +151,7 @@ class CsvFailureTests(unittest.TestCase):
                     raise OSError("forced CURRENT pointer replacement failure")
                 return real_replace(source_path, destination_path)
 
-            source.write_text('{"content":"second generation"}\\n', encoding="utf-8")
+            source.write_text('{"content":"second generation"}\n', encoding="utf-8")
             with patch("elite_ingestion.cli.os.replace", side_effect=fail_only_current_pointer):
                 with self.assertRaises(SystemExit) as raised:
                     main([
