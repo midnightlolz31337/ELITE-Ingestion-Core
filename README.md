@@ -13,21 +13,24 @@ A local JSONL/CSV ingestion prototype that streams input, preserves record diges
 
 ## Quick start
 Python 3.10+, standard library only:
-```bash
-python -m elite_ingestion.cli ingest examples/sample.jsonl --source-id demo --operator-asserts-authorized
-python -m elite_ingestion.cli inspect output/accepted.jsonl output/quarantine.jsonl
-python -m unittest discover -s tests -v
-```
 
-The legacy `--authorized` flag remains an alias for compatibility. Both flags record only an operator assertion. They do **not** authenticate an operator, establish legal or contractual authority, or enforce a source registry or organizational policy. Production integrations must supply an independently enforced policy decision and audit reference.
+~~~bash
+python -m elite_ingestion.cli ingest examples/sample.jsonl --source-id demo --operator-asserts-authorized
+python -m elite_ingestion.cli inspect output/CURRENT.json
+python -m unittest discover -s tests -v
+~~~
+
+The legacy --authorized flag remains an alias for compatibility. Both flags record only an operator assertion. They do **not** authenticate an operator, establish legal or contractual authority, or enforce a source registry or organizational policy. Production integrations must supply an independently enforced policy decision and audit reference.
 
 ## Resource limits
-Defaults: 5 MiB aggregate input, 256 KiB per JSONL record / CSV row representation, and 256 CSV columns. Input is consumed incrementally. CSV quoted multiline fields are supported. Inputs that exceed the aggregate limit fail the import; oversized individual records are quarantined.
+Defaults: 5 MiB aggregate input, 256 KiB per JSONL record / CSV row representation, and 256 CSV columns. CSV field parsing also respects Python's configured csv module field-size limit (typically 128 KiB on CPython). Input is consumed incrementally. CSV quoted multiline fields are supported. Inputs that exceed the aggregate limit fail the import; oversized individual records are quarantined.
 
-The library exposes `iter_ingest` for bounded-memory processing. The older `ingest` convenience wrapper remains available but accumulates results in memory and should only be used for small inputs or tests.
+Malformed CSV quoting and fields that exceed the configured CSV parser limit fail the import with a controlled error. The ingestion library does not change the process-global CSV parser setting. The CLI writes accepted and quarantine records into a new immutable generation directory, fsyncs both files, and atomically replaces a single output/CURRENT.json pointer only after processing succeeds. Consumers should read the two files from the generation referenced by CURRENT.json; the pointer is the authoritative commit record. External components should use `elite_ingestion.generation.read_current_generation(pointer)` to validate CURRENT.json and resolve the committed generation rather than reimplementing pointer checks or depending on a private CLI helper. If parsing or resource limits fail, the staging directory is discarded and the prior pointer and generation remain unchanged. A crash after generation creation but before pointer replacement may leave an unreferenced generation directory, but it cannot make a mixed pair current.
+
+The library exposes iter_ingest for bounded-memory processing. The older ingest convenience wrapper remains available but accumulates results in memory and should only be used for small inputs or tests.
 
 ## Identifiers and integrity
-Each import receives a UUID import ID by default. Record IDs combine that import ID and source line number, avoiding collisions between repeated imports. A caller may supply a stable import ID when deliberately reproducing an import. SHA-256 digests cover the raw JSONL line or normalized CSV row representation; for CSV this is not a byte-for-byte digest of the original file row.
+Each CLI import receives a UUID generation/import ID. Record IDs combine that ID and source line number, avoiding collisions between repeated imports. Every emitted envelope also records its source format (`jsonl` or `csv`) so downstream adapters can select the correct digest semantics without relying on an external caller label. CURRENT.json records the generation path, record counts, byte sizes, and SHA-256 digests for both output files; inspect verifies those values, newline termination, and record counts before reporting the generation. It rejects duplicate JSON keys, non-canonical generation UUIDs, timezone-free creation timestamps, symlinked paths, and malformed count metadata. Existing flat output files from earlier prototype versions are not updated and should not be treated as the current output. Each envelope uses the explicitly named fields `record_representation_sha256`, `record_representation_size_bytes`, and `record_representation_scope`. JSONL uses `jsonl.raw_line.bytes` (the exact physical line bytes, including a line terminator when present). CSV uses `csv.parsed_row.canonical_json.utf8` (a canonical JSON array of parsed field values, not the original CSV row bytes). Oversized CSV rows are hashed in full as canonical representations; only their record content is withheld from the envelope. These representation digests must not be described as a digest of the original CSV source bytes or confused with the separate ELITE Protocol `content.text.utf8` digest.
 
 ## Limitations
 Instruction-injection markers are heuristics, not a complete detector or a security boundary. Hashes establish byte-level integrity relative to a digest, not truth, authorship, or legality. Duplicate detection is not semantic. A clean validation result does not establish source accuracy. This prototype does not implement a source registry, identity/authentication, legal review, signed manifests, network collection, crawling, or autonomous action.
@@ -36,3 +39,8 @@ Instruction-injection markers are heuristics, not a complete detector or a secur
 - [ELITE Protocol](https://github.com/midnightlolz31337/ELITE-Protocol)
 - [ELITE Agent Commons](https://github.com/midnightlolz31337/ELITE-Agent-Commons)
 - [Huffman Network Atlas](https://github.com/midnightlolz31337/Huffman-Network-Atlas)
+
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE). The project code is offered under Apache-2.0; this does not grant trademark rights.

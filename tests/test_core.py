@@ -1,4 +1,5 @@
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,8 +26,30 @@ class IngestionTests(unittest.TestCase):
             accepted, quarantine = ingest(path, "jsonl", "test", True, import_id="run-1")
             self.assertEqual(len(accepted), 1)
             self.assertEqual(quarantine, [])
-            self.assertEqual(len(accepted[0]["content_sha256"]), 64)
+            self.assertEqual(len(accepted[0]["record_representation_sha256"]), 64)
             self.assertEqual(accepted[0]["record_id"], "run-1:1")
+            self.assertEqual(accepted[0]["source_format"], "jsonl")
+
+    def test_csv_ingestion_envelope_records_source_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write(tmp, "input.csv", b"content\nCSV evidence\n")
+            accepted, quarantine = ingest(path, "csv", "test", True, import_id="csv-run")
+            self.assertEqual(len(accepted), 1)
+            self.assertEqual(quarantine, [])
+            self.assertEqual(accepted[0]["source_format"], "csv")
+            canonical_row = b'["CSV evidence"]'
+            self.assertEqual(
+                accepted[0]["record_representation_sha256"],
+                hashlib.sha256(canonical_row).hexdigest(),
+            )
+            self.assertEqual(
+                accepted[0]["record_representation_scope"],
+                "csv.parsed_row.canonical_json.utf8",
+            )
+            self.assertEqual(
+                accepted[0]["record_representation_size_bytes"],
+                len(canonical_row),
+            )
 
     def test_unauthorized_source_quarantined(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -73,12 +96,16 @@ class IngestionTests(unittest.TestCase):
 
     def test_oversized_record_digest_covers_full_original_line(self):
         with tempfile.TemporaryDirectory() as tmp:
-            raw = b'{"content":"' + b"x" * 100 + b'"}\\n'
+            raw = b'{"content":"' + b"x" * 100 + b'"}\n'
             path = self.write(tmp, "oversized.jsonl", raw)
             with patch("elite_ingestion.core.MAX_RECORD_BYTES", 32):
                 _, quarantine = ingest(path, "jsonl", "source", True)
-            self.assertEqual(quarantine[0]["content_sha256"], hashlib.sha256(raw).hexdigest())
-            self.assertEqual(quarantine[0]["raw_size_bytes"], len(raw))
+            self.assertEqual(quarantine[0]["record_representation_sha256"], hashlib.sha256(raw).hexdigest())
+            self.assertEqual(quarantine[0]["record_representation_size_bytes"], len(raw))
+            self.assertEqual(
+                quarantine[0]["record_representation_scope"],
+                "jsonl.raw_line.bytes",
+            )
 
     def test_csv_stream_supports_quoted_multiline_content(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -107,6 +134,30 @@ class IngestionTests(unittest.TestCase):
             first = next(records)
             self.assertEqual(first[1]["source_record"], 1)
             self.assertEqual(next(records)[1]["source_record"], 2)
+
+
+
+    def test_oversized_csv_representation_digest_covers_full_canonical_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            content = "x" * 20 + "\n" + "x" * 20
+            canonical = json.dumps([content], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            source = b'content\n"' + b"x" * 20 + b"\n" + b"x" * 20 + b'"\n'
+            path = self.write(tmp, "large.csv", source)
+            with patch("elite_ingestion.core.MAX_RECORD_BYTES", 32):
+                _, quarantine = ingest(path, "csv", "source", True)
+            self.assertEqual(len(quarantine), 1)
+            self.assertEqual(
+                quarantine[0]["record_representation_sha256"],
+                hashlib.sha256(canonical).hexdigest(),
+            )
+            self.assertEqual(
+                quarantine[0]["record_representation_size_bytes"],
+                len(canonical),
+            )
+            self.assertEqual(
+                quarantine[0]["record_representation_scope"],
+                "csv.parsed_row.canonical_json.utf8",
+            )
 
 
 if __name__ == "__main__":

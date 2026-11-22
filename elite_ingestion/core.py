@@ -7,7 +7,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterator
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_RECORD_BYTES = 256 * 1024
@@ -23,7 +23,7 @@ class DuplicateKeyError(ValueError):
 
 
 @dataclass(frozen=True)
-class RawDigest:
+class RecordRepresentationDigest:
     """Digest/size for an oversized raw record retained without retaining its bytes."""
     sha256: str
     size_bytes: int
@@ -74,13 +74,11 @@ def inspect_record(record: dict, source_id: str, operator_asserts_authorized: bo
     return ("quarantine" if reasons else "accepted"), reasons
 
 
-def _bounded_binary_lines(path: Path) -> Iterator[bytes | RawDigest]:
+def _bounded_binary_lines(path: Path) -> Iterator[bytes | RecordRepresentationDigest]:
     """Yield lines without reading the entire file; enforce aggregate bytes."""
     total = 0
     with path.open("rb") as handle:
         while True:
-            # readline(size) caps the allocation even when an attacker supplies
-            # a single enormous line without a newline.
             line = handle.readline(MAX_RECORD_BYTES + 1)
             if not line:
                 break
@@ -88,8 +86,6 @@ def _bounded_binary_lines(path: Path) -> Iterator[bytes | RawDigest]:
             if total > MAX_FILE_BYTES:
                 raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
             if len(line) > MAX_RECORD_BYTES:
-                # Hash the complete oversized record while draining it in
-                # fixed-size chunks; retain only digest and byte count.
                 digest = hashlib.sha256()
                 digest.update(line)
                 record_size = len(line)
@@ -104,7 +100,7 @@ def _bounded_binary_lines(path: Path) -> Iterator[bytes | RawDigest]:
                         raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
                     if chunk.endswith(b"\n"):
                         break
-                yield RawDigest(digest.hexdigest(), record_size)
+                yield RecordRepresentationDigest(digest.hexdigest(), record_size)
             else:
                 yield line
 
@@ -117,25 +113,23 @@ def _bounded_text_lines(path: Path) -> Iterator[str]:
             line = handle.readline(MAX_RECORD_BYTES + 1)
             if not line:
                 break
-            total += len(line.encode("utf-8"))
+            encoded_size = len(line.encode("utf-8"))
+            total += encoded_size
             if total > MAX_FILE_BYTES:
                 raise ValueError(f"input exceeds {MAX_FILE_BYTES} bytes")
-            if len(line.encode("utf-8")) > MAX_RECORD_BYTES:
+            if encoded_size > MAX_RECORD_BYTES:
                 raise ValueError("CSV physical line exceeds record byte limit")
             yield line
 
 
-def iter_records(path: Path, fmt: str) -> Iterator[tuple[int, dict, bytes | RawDigest]]:
+def iter_records(path: Path, fmt: str) -> Iterator[tuple[int, dict, bytes | RecordRepresentationDigest]]:
     """Stream parsed records. Limits are enforced while reading, not after allocation."""
     if fmt == "jsonl":
         for line_no, line in enumerate(_bounded_binary_lines(path), 1):
-            if isinstance(line, RawDigest):
+            if isinstance(line, RecordRepresentationDigest):
                 yield line_no, {"_record_too_large": True}, line
                 continue
             if not line.strip():
-                continue
-            if len(line) > MAX_RECORD_BYTES:
-                yield line_no, {"_record_too_large": True}, line[:MAX_RECORD_BYTES]
                 continue
             try:
                 value = strict_json_loads(line.decode("utf-8"))
@@ -143,26 +137,36 @@ def iter_records(path: Path, fmt: str) -> Iterator[tuple[int, dict, bytes | RawD
             except (UnicodeDecodeError, json.JSONDecodeError, DuplicateKeyError):
                 yield line_no, {"_parse_error": True}, line
     elif fmt == "csv":
+        # Respect the csv module's configured field cap rather than mutating
+        # its process-global setting. The aggregate input bound remains the
+        # outer memory ceiling if an embedding application changes that cap.
         reader = csv.reader(_bounded_text_lines(path), strict=True)
         try:
             headers = next(reader)
         except StopIteration:
             raise ValueError("CSV input is empty") from None
+        except csv.Error as exc:
+            raise ValueError(f"malformed CSV header: {exc}") from exc
         if not headers or "content" not in headers:
             raise ValueError("CSV must contain a content column")
         if len(headers) > MAX_CSV_FIELDS or len(set(headers)) != len(headers):
             raise ValueError("CSV headers exceed field limit or contain duplicates")
         if any(not header for header in headers):
             raise ValueError("CSV headers must be non-empty")
-        for row in reader:
-            line_no = reader.line_num
-            encoded = json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            if len(row) != len(headers):
-                yield line_no, {"_parse_error": True}, encoded[:MAX_RECORD_BYTES]
-            elif len(encoded) > MAX_RECORD_BYTES or any(len(value.encode("utf-8")) > MAX_RECORD_BYTES for value in row):
-                yield line_no, {"_record_too_large": True}, encoded[:MAX_RECORD_BYTES]
-            else:
-                yield line_no, dict(zip(headers, row)), encoded
+        try:
+            for row in reader:
+                line_no = reader.line_num
+                encoded = json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                if len(row) != len(headers):
+                    yield line_no, {"_parse_error": True}, encoded[:MAX_RECORD_BYTES]
+                elif len(encoded) > MAX_RECORD_BYTES or any(len(value.encode("utf-8")) > MAX_RECORD_BYTES for value in row):
+                    yield line_no, {"_record_too_large": True}, RecordRepresentationDigest(
+                        hashlib.sha256(encoded).hexdigest(), len(encoded)
+                    )
+                else:
+                    yield line_no, dict(zip(headers, row)), encoded
+        except csv.Error as exc:
+            raise ValueError(f"malformed CSV or field exceeds the Python CSV parser limit: {exc}") from exc
     else:
         raise ValueError("format must be jsonl or csv")
 
@@ -188,9 +192,14 @@ def iter_ingest(
             "record_id": f"{run_id}:{line_no}",
             "import_id": run_id,
             "source_id": source_id,
+            "source_format": fmt,
             "source_record": line_no,
-            "content_sha256": raw.sha256 if isinstance(raw, RawDigest) else sha256_bytes(raw),
-            "raw_size_bytes": raw.size_bytes if isinstance(raw, RawDigest) else len(raw),
+            "record_representation_sha256": raw.sha256 if isinstance(raw, RecordRepresentationDigest) else sha256_bytes(raw),
+            "record_representation_size_bytes": raw.size_bytes if isinstance(raw, RecordRepresentationDigest) else len(raw),
+            "record_representation_scope": (
+                "jsonl.raw_line.bytes" if fmt == "jsonl"
+                else "csv.parsed_row.canonical_json.utf8"
+            ),
             "record": record,
             "decision": status,
             "reasons": reasons,
