@@ -27,6 +27,15 @@ class IngestionTests(unittest.TestCase):
             self.assertEqual(quarantine, [])
             self.assertEqual(len(accepted[0]["content_sha256"]), 64)
             self.assertEqual(accepted[0]["record_id"], "run-1:1")
+            self.assertEqual(accepted[0]["source_format"], "jsonl")
+
+    def test_csv_ingestion_envelope_records_source_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write(tmp, "input.csv", b"content\nCSV evidence\n")
+            accepted, quarantine = ingest(path, "csv", "test", True, import_id="csv-run")
+            self.assertEqual(len(accepted), 1)
+            self.assertEqual(quarantine, [])
+            self.assertEqual(accepted[0]["source_format"], "csv")
 
     def test_unauthorized_source_quarantined(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -73,7 +82,7 @@ class IngestionTests(unittest.TestCase):
 
     def test_oversized_record_digest_covers_full_original_line(self):
         with tempfile.TemporaryDirectory() as tmp:
-            raw = b'{"content":"' + b"x" * 100 + b'"}\\n'
+            raw = b'{"content":"' + b"x" * 100 + b'"}\n'
             path = self.write(tmp, "oversized.jsonl", raw)
             with patch("elite_ingestion.core.MAX_RECORD_BYTES", 32):
                 _, quarantine = ingest(path, "jsonl", "source", True)
