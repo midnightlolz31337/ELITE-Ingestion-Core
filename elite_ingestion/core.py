@@ -190,6 +190,7 @@ def iter_ingest(
             "record_id": f"{run_id}:{line_no}",
             "import_id": run_id,
             "source_id": source_id,
+            "source_format": fmt,
             "source_record": line_no,
             "content_sha256": raw.sha256 if isinstance(raw, RawDigest) else sha256_bytes(raw),
             "raw_size_bytes": raw.size_bytes if isinstance(raw, RawDigest) else len(raw),
