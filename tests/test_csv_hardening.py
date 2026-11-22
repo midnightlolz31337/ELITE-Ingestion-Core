@@ -208,7 +208,7 @@ class CsvFailureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "input.jsonl"
-            source.write_text('{"content":"public generation API"}\\n', encoding="utf-8")
+            source.write_text('{"content":"public generation API"}\n', encoding="utf-8")
             output = root / "output"
             main([
                 "ingest", str(source), "--source-id", "test",
