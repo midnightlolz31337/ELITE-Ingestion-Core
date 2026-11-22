@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -128,6 +129,43 @@ class CsvFailureTests(unittest.TestCase):
                 [previous_manifest["generation_id"]],
             )
             self.assertFalse(any(item.name.startswith(".elite-ingest-") for item in output.iterdir()))
+
+
+    def test_pointer_replace_failure_keeps_previous_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output"
+            source = root / "input.jsonl"
+            source.write_text('{"content":"first generation"}\\n', encoding="utf-8")
+            main([
+                "ingest", str(source), "--source-id", "test",
+                "--operator-asserts-authorized", "--output-dir", str(output),
+            ])
+            pointer = output / "CURRENT.json"
+            previous_bytes = pointer.read_bytes()
+            previous_manifest = json.loads(previous_bytes)
+            real_replace = os.replace
+
+            def fail_only_current_pointer(source_path, destination_path):
+                if Path(destination_path).name == "CURRENT.json":
+                    raise OSError("forced CURRENT pointer replacement failure")
+                return real_replace(source_path, destination_path)
+
+            source.write_text('{"content":"second generation"}\\n', encoding="utf-8")
+            with patch("elite_ingestion.cli.os.replace", side_effect=fail_only_current_pointer):
+                with self.assertRaises(SystemExit) as raised:
+                    main([
+                        "ingest", str(source), "--source-id", "test",
+                        "--operator-asserts-authorized", "--output-dir", str(output),
+                    ])
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertEqual(pointer.read_bytes(), previous_bytes)
+            self.assertTrue((output / previous_manifest["generation_path"] / "accepted.jsonl").is_file())
+            self.assertEqual(
+                [item.name for item in (output / "generations").iterdir()],
+                [previous_manifest["generation_id"]],
+            )
 
     def test_csv_parser_failures_preserve_both_existing_outputs(self):
         cases = (
