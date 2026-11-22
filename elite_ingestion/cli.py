@@ -51,6 +51,8 @@ def _write_current_pointer(output_dir: Path, manifest: dict) -> None:
 
 
 def _read_current_pointer(pointer: Path) -> tuple[dict, Path]:
+    if pointer.is_symlink():
+        raise ValueError("CURRENT.json must not be a symlink")
     try:
         manifest = json.loads(pointer.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -67,14 +69,24 @@ def _read_current_pointer(pointer: Path) -> tuple[dict, Path]:
     generation_id = manifest["generation_id"]
     if not isinstance(generation_id, str) or not generation_id:
         raise ValueError("CURRENT.json generation_id is invalid")
+    try:
+        parsed_generation_id = uuid.UUID(generation_id)
+    except ValueError as exc:
+        raise ValueError("CURRENT.json generation_id is not a UUID") from exc
+    if str(parsed_generation_id) != generation_id:
+        raise ValueError("CURRENT.json generation_id is not canonical")
     expected_generation_path = f"generations/{generation_id}"
     if manifest["generation_path"] != expected_generation_path:
         raise ValueError("CURRENT.json generation path is invalid")
 
     output_dir = pointer.parent.resolve()
-    generations_dir = (output_dir / "generations").resolve()
-    generation_dir = (output_dir / expected_generation_path).resolve()
-    if generation_dir.parent != generations_dir or not generation_dir.is_dir() or generation_dir.is_symlink():
+    raw_generations_dir = output_dir / "generations"
+    raw_generation_dir = output_dir / expected_generation_path
+    if raw_generations_dir.is_symlink() or raw_generation_dir.is_symlink():
+        raise ValueError("current generation path must not contain symlinks")
+    generations_dir = raw_generations_dir.resolve()
+    generation_dir = raw_generation_dir.resolve()
+    if generation_dir.parent != generations_dir or not generation_dir.is_dir():
         raise ValueError("current generation directory is missing or outside generations/")
 
     files = manifest["files"]
@@ -90,8 +102,10 @@ def _read_current_pointer(pointer: Path) -> tuple[dict, Path]:
         file_path = generation_dir / name
         if file_path.is_symlink() or not file_path.is_file():
             raise ValueError(f"current generation file is missing or unsafe: {name}")
-        if isinstance(entry["size"], bool) or not isinstance(entry["size"], int):
+        if isinstance(entry["size"], bool) or not isinstance(entry["size"], int) or entry["size"] < 0:
             raise ValueError(f"CURRENT.json size for {name} is invalid")
+        if not isinstance(entry["sha256"], str) or len(entry["sha256"]) != 64 or any(ch not in "0123456789abcdef" for ch in entry["sha256"]):
+            raise ValueError(f"CURRENT.json SHA-256 for {name} is invalid")
         if file_path.stat().st_size != entry["size"] or _sha256_file(file_path) != entry["sha256"]:
             raise ValueError(f"current generation integrity check failed: {name}")
 
