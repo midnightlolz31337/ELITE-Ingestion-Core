@@ -1,4 +1,5 @@
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -138,9 +139,10 @@ class IngestionTests(unittest.TestCase):
 
     def test_oversized_csv_representation_digest_covers_full_canonical_row(self):
         with tempfile.TemporaryDirectory() as tmp:
-            row = ["x" * 100]
-            canonical = b'["' + b"x" * 100 + b'"]'
-            path = self.write(tmp, "large.csv", b"content\n" + b"x" * 100 + b"\n")
+            content = "x" * 20 + "\\n" + "x" * 20
+            canonical = json.dumps([content], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            source = b'content\\n"' + b"x" * 20 + b"\\n" + b"x" * 20 + b'"\\n'
+            path = self.write(tmp, "large.csv", source)
             with patch("elite_ingestion.core.MAX_RECORD_BYTES", 32):
                 _, quarantine = ingest(path, "csv", "source", True)
             self.assertEqual(len(quarantine), 1)
@@ -156,6 +158,7 @@ class IngestionTests(unittest.TestCase):
                 quarantine[0]["record_representation_scope"],
                 "csv.parsed_row.canonical_json.utf8",
             )
+
 
 if __name__ == "__main__":
     unittest.main()
